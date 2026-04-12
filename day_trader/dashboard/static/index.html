@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Axiom Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: { brand: '#3b82f6' },
+          fontFamily: { mono: ['JetBrains Mono', 'Fira Code', 'ui-monospace', 'monospace'] }
+        }
+      }
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.0/dist/apexcharts.min.js"></script>
+  <style>
+    body { font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; }
+    .badge-completed { background: #16a34a22; color: #4ade80; border: 1px solid #16a34a55; }
+    .badge-with-errors { background: #d9770622; color: #fb923c; border: 1px solid #d9770655; }
+    .badge-failed { background: #dc262622; color: #f87171; border: 1px solid #dc262655; }
+    .badge-running { background: #2563eb22; color: #60a5fa; border: 1px solid #2563eb55; }
+    tr.run-row { cursor: pointer; transition: background 0.15s; }
+    tr.run-row:hover { background: #1e293b; }
+    tr.run-row.selected { background: #1e3a5f; }
+    .kpi-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px 20px; }
+    .kpi-value { font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
+    .kpi-label { font-size: 0.65rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 2px; }
+    #detail-wrapper { transition: width 0.25s ease; flex-shrink: 0; }
+    .apexcharts-tooltip { background: #1e293b !important; border: 1px solid #334155 !important; color: #e2e8f0 !important; }
+    .apexcharts-tooltip-title { background: #0f172a !important; border-bottom: 1px solid #334155 !important; }
+    .section-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; }
+    thead th { position: sticky; top: 0; z-index: 1; background: #0f172a; }
+    .pnl-pos { color: #4ade80; }
+    .pnl-neg { color: #f87171; }
+    .pnl-neu { color: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+
+<!-- ===================== HEADER ===================== -->
+<header class="sticky top-0 z-40 bg-slate-950 border-b border-slate-800 px-6 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <div class="w-7 h-7 rounded-md bg-brand flex items-center justify-center text-white font-bold text-sm">A</div>
+    <span class="text-slate-100 font-bold tracking-wide text-sm">AXIOM</span>
+    <span class="text-slate-600 text-xs">/ dashboard</span>
+  </div>
+  <div class="flex items-center gap-6 text-xs">
+    <div class="flex items-center gap-1.5">
+      <span class="w-2 h-2 rounded-full bg-slate-600" id="hdr-active-dot"></span>
+      <span class="text-slate-400" id="hdr-active">— active</span>
+    </div>
+    <span class="text-slate-500">|</span>
+    <span class="text-slate-400"><span id="hdr-total">—</span> runs</span>
+    <span class="text-slate-500">|</span>
+    <span class="text-slate-400"><span id="hdr-trades">—</span> trades</span>
+    <span class="text-slate-500">|</span>
+    <span class="text-slate-600 text-xs">updated <span id="hdr-updated">—</span></span>
+  </div>
+</header>
+
+<!-- ===================== MAIN LAYOUT ===================== -->
+<div class="flex h-[calc(100vh-53px)] overflow-hidden">
+
+  <!-- LEFT / MAIN CONTENT -->
+  <div class="flex-1 overflow-y-auto p-5 space-y-5" id="main-col">
+
+    <!-- RUNS TABLE -->
+    <div class="section-card overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-800 flex items-center justify-between">
+        <span class="text-sm font-semibold text-slate-300">All Runs</span>
+        <button onclick="refresh()" class="text-xs text-slate-500 hover:text-slate-300 transition-colors">&#8635; refresh</button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-slate-500 text-left border-b border-slate-800">
+              <th class="px-4 py-2.5 font-medium">Strategy</th>
+              <th class="px-4 py-2.5 font-medium">Symbol</th>
+              <th class="px-4 py-2.5 font-medium">Mode</th>
+              <th class="px-4 py-2.5 font-medium">Status</th>
+              <th class="px-4 py-2.5 font-medium text-right">Bars</th>
+              <th class="px-4 py-2.5 font-medium text-right">Trades</th>
+              <th class="px-4 py-2.5 font-medium text-right">Win Rate</th>
+              <th class="px-4 py-2.5 font-medium text-right">PnL %</th>
+              <th class="px-4 py-2.5 font-medium text-right">Sharpe</th>
+              <th class="px-4 py-2.5 font-medium text-right">Duration</th>
+              <th class="px-4 py-2.5 font-medium">Started</th>
+              <th class="px-4 py-2.5 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody id="runs-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /main-col -->
+
+  <!-- RIGHT / DETAIL PANEL -->
+  <div id="detail-wrapper" style="width: 0; min-width: 0; overflow: hidden;">
+  <aside
+    id="detail-panel"
+    class="w-[520px] shrink-0 border-l border-slate-800 bg-slate-950 overflow-y-auto flex flex-col h-full"
+  >
+    <!-- Panel header -->
+    <div class="sticky top-0 z-10 bg-slate-950 border-b border-slate-800 px-5 py-3 flex items-center justify-between">
+      <span class="text-sm font-semibold text-slate-200" id="detail-title">Run Detail</span>
+      <div class="flex items-center gap-3">
+        <a id="detail-open-page" href="#" class="hidden text-xs text-brand hover:text-blue-300 transition-colors">open full view</a>
+        <button onclick="closeDetail()" class="text-slate-500 hover:text-slate-200 text-lg leading-none transition-colors">&times;</button>
+      </div>
+    </div>
+
+    <div class="p-5 space-y-5 flex-1">
+      <!-- KPI cards -->
+      <div class="grid grid-cols-3 gap-3" id="kpi-grid"></div>
+
+      <!-- PnL chart -->
+      <div class="section-card p-4">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs text-slate-500 uppercase tracking-widest">Cumulative PnL vs Benchmarks</p>
+          <button onclick="openChartFullscreen()" id="btn-expand-chart"
+            class="text-slate-600 hover:text-slate-300 transition-colors hidden" title="Expand chart">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V6a2 2 0 012-2h2M4 16v2a2 2 0 002 2h2M16 4h2a2 2 0 012 2v2M16 20h2a2 2 0 002-2v-2"/>
+            </svg>
+          </button>
+        </div>
+        <div id="chart-pnl"></div>
+        <p id="pnl-empty" class="text-xs text-slate-600 text-center py-6 hidden">No filled trades in this run</p>
+      </div>
+
+      <!-- Events table -->
+      <div class="section-card overflow-hidden">
+        <p class="text-xs text-slate-500 uppercase tracking-widest px-4 py-3 border-b border-slate-800">Trade Events</p>
+        <div class="overflow-x-auto max-h-72">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-slate-500 text-left border-b border-slate-800">
+                <th class="px-3 py-2 font-medium">Time</th>
+                <th class="px-3 py-2 font-medium">Type</th>
+                <th class="px-3 py-2 font-medium">Side</th>
+                <th class="px-3 py-2 font-medium text-right">Qty</th>
+                <th class="px-3 py-2 font-medium text-right">Limit</th>
+                <th class="px-3 py-2 font-medium text-right">Fill</th>
+                <th class="px-3 py-2 font-medium">Status</th>
+                <th class="px-3 py-2 font-medium">Reason</th>
+              </tr>
+            </thead>
+            <tbody id="events-tbody"></tbody>
+          </table>
+          <p id="events-empty" class="text-xs text-slate-600 text-center py-6 hidden">No order events</p>
+        </div>
+      </div>
+
+      <!-- Position snapshots -->
+      <div class="section-card overflow-hidden">
+        <p class="text-xs text-slate-500 uppercase tracking-widest px-4 py-3 border-b border-slate-800">Position Snapshots</p>
+        <div class="overflow-x-auto max-h-72">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-slate-500 text-left border-b border-slate-800">
+                <th class="px-3 py-2 font-medium">Time</th>
+                <th class="px-3 py-2 font-medium">Symbol</th>
+                <th class="px-3 py-2 font-medium text-right">Qty</th>
+                <th class="px-3 py-2 font-medium text-right">Mkt Value</th>
+                <th class="px-3 py-2 font-medium text-right">Unrealized</th>
+              </tr>
+            </thead>
+            <tbody id="positions-tbody"></tbody>
+          </table>
+          <p id="positions-empty" class="text-xs text-slate-600 text-center py-6 hidden">No position snapshots recorded for this run</p>
+        </div>
+      </div>
+    </div>
+  </aside>
+  </div><!-- /detail-wrapper -->
+
+</div><!-- /flex layout -->
+
+<!-- ===================== FULLSCREEN CHART MODAL ===================== -->
+<div id="chart-modal" class="hidden fixed inset-0 z-50 bg-slate-950 flex flex-col">
+  <div class="shrink-0 flex items-center justify-between px-6 py-3 border-b border-slate-800">
+    <p class="text-xs text-slate-400 uppercase tracking-widest">Cumulative PnL vs Benchmarks</p>
+    <button onclick="closeChartFullscreen()" class="text-slate-500 hover:text-slate-200 text-2xl leading-none transition-colors" title="Close">&times;</button>
+  </div>
+  <div class="flex-1 p-5 min-h-0">
+    <div id="chart-pnl-modal"></div>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+//  STATE
+// =====================================================================
+const state = {
+  runs: [],
+  summary: null,
+  selectedRunId: null,
+  charts: { pnl: null, pnlModal: null },
+  pnlCache: { pnl: [], benchmarks: null },
+};
+
+// =====================================================================
+//  UTILS
+// =====================================================================
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+function fmt(v, decimals = 2, suffix = '') {
+  if (v === null || v === undefined) return '—';
+  return Number(v).toFixed(decimals) + suffix;
+}
+
+function fmtDuration(secs) {
+  if (secs === null || secs === undefined) return '—';
+  if (secs < 60) return secs.toFixed(1) + 's';
+  if (secs < 3600) return (secs / 60).toFixed(1) + 'm';
+  return (secs / 3600).toFixed(2) + 'h';
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  } catch { return iso.slice(0, 19); }
+}
+
+function fmtTimeShort(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleTimeString(undefined, { hour12: false }); }
+  catch { return iso.slice(11, 19); }
+}
+
+function strategyShort(name) {
+  if (!name) return '—';
+  const parts = name.split('.');
+  return parts[parts.length - 1];
+}
+
+function statusBadge(status) {
+  const map = {
+    COMPLETED: 'badge-completed',
+    COMPLETED_WITH_ERRORS: 'badge-with-errors',
+    FAILED: 'badge-failed',
+    RUNNING: 'badge-running',
+  };
+  const cls = map[status] || 'badge-running';
+  const label = status === 'COMPLETED_WITH_ERRORS' ? 'W/ERRORS' : (status || '?');
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function pnlClass(v) {
+  if (v === null || v === undefined) return 'pnl-neu';
+  return v > 0 ? 'pnl-pos' : v < 0 ? 'pnl-neg' : 'pnl-neu';
+}
+
+function normalizeWinRate(winRate) {
+  if (winRate === null || winRate === undefined) return null;
+  return winRate <= 1 ? winRate * 100 : winRate;
+}
+
+// =====================================================================
+//  DARK THEME BASE FOR APEXCHARTS
+// =====================================================================
+const darkBase = {
+  theme: { mode: 'dark' },
+  chart: { background: 'transparent', foreColor: '#64748b', toolbar: { show: false }, animations: { enabled: false } },
+  grid: { borderColor: '#1e293b', strokeDashArray: 3 },
+  tooltip: { theme: 'dark' },
+};
+
+// =====================================================================
+//  REFRESH
+// =====================================================================
+async function refresh() {
+  const [summary, runs] = await Promise.all([
+    fetchJSON('/api/summary'),
+    fetchJSON('/api/runs'),
+  ]);
+  state.summary = summary || { total_runs: 0, active_runs: 0, completed_runs: 0, failed_runs: 0, last_run_at: null, total_trades: 0, total_bars_processed: 0 };
+  state.runs = runs || [];
+
+  renderHeader();
+  renderRunsTable();
+
+  if (state.selectedRunId) {
+    loadDetail(state.selectedRunId);
+  }
+}
+
+// =====================================================================
+//  HEADER
+// =====================================================================
+function renderHeader() {
+  const s = state.summary;
+  document.getElementById('hdr-total').textContent = s.total_runs;
+  document.getElementById('hdr-trades').textContent = s.total_trades;
+
+  const dot = document.getElementById('hdr-active-dot');
+  const activeEl = document.getElementById('hdr-active');
+  if (s.active_runs > 0) {
+    dot.className = 'w-2 h-2 rounded-full bg-blue-500 animate-pulse';
+    activeEl.textContent = s.active_runs + ' active';
+  } else {
+    dot.className = 'w-2 h-2 rounded-full bg-slate-700';
+    activeEl.textContent = '0 active';
+  }
+  document.getElementById('hdr-updated').textContent = new Date().toLocaleTimeString(undefined, { hour12: false });
+}
+
+// =====================================================================
+//  RUNS TABLE
+// =====================================================================
+function renderRunsTable() {
+  const tbody = document.getElementById('runs-tbody');
+  if (state.runs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="12" class="px-4 py-10 text-center text-slate-600">
+      No runs found. Run <code class="text-slate-400">trader run ...</code> to get started.
+    </td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = state.runs.map(r => {
+    const isSelected = r.run_id === state.selectedRunId;
+    const winRatePct = normalizeWinRate(r.win_rate);
+    const wrStr = winRatePct !== null ? fmt(winRatePct, 1) + '%' : '—';
+    const pnlStr = r.returns_pct !== null ? fmt(r.returns_pct, 2) + '%' : '—';
+    const pnlCls = r.returns_pct !== null ? pnlClass(r.returns_pct) : 'pnl-neu';
+    const sharpeStr = r.sharpe_ratio !== null ? fmt(r.sharpe_ratio, 2) : '—';
+
+    return `<tr class="run-row border-b border-slate-900 ${isSelected ? 'selected' : ''}"
+              onclick="openDetail('${r.run_id}')"
+              data-runid="${r.run_id}">
+      <td class="px-4 py-2.5 text-slate-200 font-medium">${strategyShort(r.strategy_name)}</td>
+      <td class="px-4 py-2.5 text-slate-300">${r.symbol || '—'}</td>
+      <td class="px-4 py-2.5 text-slate-500">${r.mode || '—'}</td>
+      <td class="px-4 py-2.5">${statusBadge(r.status)}</td>
+      <td class="px-4 py-2.5 text-right text-slate-400">${r.bars_processed}</td>
+      <td class="px-4 py-2.5 text-right text-slate-300">${r.trades_executed}</td>
+      <td class="px-4 py-2.5 text-right text-slate-400">${wrStr}</td>
+      <td class="px-4 py-2.5 text-right ${pnlCls}">${pnlStr}</td>
+      <td class="px-4 py-2.5 text-right text-slate-400">${sharpeStr}</td>
+      <td class="px-4 py-2.5 text-right text-slate-500">${fmtDuration(r.elapsed_seconds)}</td>
+      <td class="px-4 py-2.5 text-slate-600">${fmtTime(r.started_at_utc)}</td>
+      <td class="px-4 py-2.5">
+        <button
+          class="px-2 py-1 rounded border border-red-900/50 text-red-400 hover:border-red-500 hover:text-red-300 transition-colors"
+          onclick="event.stopPropagation(); deleteRun('${r.run_id}')"
+          title="Delete run"
+        >&#x2715;</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// =====================================================================
+//  DETAIL PANEL
+// =====================================================================
+async function openDetail(runId) {
+  state.selectedRunId = runId;
+  document.getElementById('detail-wrapper').style.width = '520px';
+
+  // Highlight selected row
+  document.querySelectorAll('.run-row').forEach(tr => {
+    tr.classList.toggle('selected', tr.dataset.runid === runId);
+  });
+
+  await loadDetail(runId);
+}
+
+async function loadDetail(runId) {
+  const [run, events, pnl, detailMetrics, benchmarks] = await Promise.all([
+    fetchJSON(`/api/runs/${runId}`),
+    fetchJSON(`/api/runs/${runId}/events`),
+    fetchJSON(`/api/runs/${runId}/pnl`),
+    fetchJSON(`/api/runs/${runId}/detail-metrics`),
+    fetchJSON(`/api/runs/${runId}/benchmarks`),
+  ]);
+
+  if (!run) return;
+
+  document.getElementById('detail-title').textContent =
+    strategyShort(run.strategy_name) + (run.symbol ? ' / ' + run.symbol : '');
+
+  const fullView = document.getElementById('detail-open-page');
+  fullView.href = `/runs/${runId}`;
+  fullView.classList.remove('hidden');
+
+  renderKPICards(run, detailMetrics || {});
+  renderEventsTable(events || []);
+  renderPnLChart(pnl || [], benchmarks);
+  renderPositionSnapshots((detailMetrics && detailMetrics.position_snapshots) || []);
+}
+
+function renderKPICards(run, detailMetrics) {
+  const pnlVal = detailMetrics.total_pnl ?? run.total_pnl;
+  const winRatePct = normalizeWinRate(detailMetrics.win_rate ?? run.win_rate);
+  const returnsPct = detailMetrics.returns_pct ?? run.returns_pct;
+  const sharpe = detailMetrics.sharpe_ratio ?? run.sharpe_ratio;
+  const drawdown = detailMetrics.max_drawdown ?? run.max_drawdown;
+  const profitFactor = detailMetrics.profit_factor ?? run.profit_factor;
+
+  const cards = [
+    { label: 'Initial Capital', value: '$' + fmt(run.initial_capital, 0), cls: '' },
+    { label: 'Bars Processed', value: run.bars_processed, cls: '' },
+    { label: 'Trades', value: detailMetrics.closed_trades ?? run.trades_executed, cls: '' },
+    { label: 'Win Rate', value: winRatePct !== null ? fmt(winRatePct, 1) + '%' : '—', cls: winRatePct !== null ? pnlClass(winRatePct - 50) : '' },
+    { label: 'Total PnL', value: pnlVal !== null ? '$' + fmt(pnlVal, 2) : '—', cls: pnlVal !== null ? pnlClass(pnlVal) : '' },
+    { label: 'Returns %', value: returnsPct !== null ? fmt(returnsPct, 2) + '%' : '—', cls: returnsPct !== null ? pnlClass(returnsPct) : '' },
+    { label: 'Sharpe', value: sharpe !== null ? fmt(sharpe, 2) : '—', cls: '' },
+    { label: 'Max Drawdown', value: drawdown !== null ? fmt(drawdown, 2) + '%' : '—', cls: drawdown !== null ? 'pnl-neg' : '' },
+    { label: 'Profit Factor', value: profitFactor !== null ? fmt(profitFactor, 2) : '—', cls: '' },
+    { label: 'Duration', value: fmtDuration(run.elapsed_seconds), cls: '' },
+  ];
+
+  document.getElementById('kpi-grid').innerHTML = cards.map(c => `
+    <div class="kpi-card">
+      <div class="kpi-value ${c.cls}">${c.value}</div>
+      <div class="kpi-label">${c.label}</div>
+    </div>
+  `).join('');
+}
+
+function renderEventsTable(events) {
+  const orderEvents = events.filter(e =>
+    e.event_type === 'ORDER_REQUESTED' || e.event_type === 'ORDER_RESULT' || e.event_type === 'ORDER_FAILED'
+  );
+  const tbody = document.getElementById('events-tbody');
+  const empty = document.getElementById('events-empty');
+
+  if (orderEvents.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = orderEvents.map(e => {
+    const typeColor = e.event_type === 'ORDER_REQUESTED' ? 'text-slate-500' : 'text-slate-300';
+    const sideColor = e.side === 'BUY' ? 'text-blue-400' : 'text-purple-400';
+    let statusEl = '';
+    if (e.status === 'FILLED') statusEl = '<span class="text-green-400">FILLED</span>';
+    else if (e.status === 'REJECTED') statusEl = '<span class="text-red-400">REJECTED</span>';
+    else if (e.status) statusEl = `<span class="text-slate-500">${e.status}</span>`;
+
+    return `<tr class="border-b border-slate-900">
+      <td class="px-3 py-1.5 text-slate-600">${fmtTimeShort(e.event_time_utc)}</td>
+      <td class="px-3 py-1.5 ${typeColor}">${e.event_type.replace('ORDER_', '')}</td>
+      <td class="px-3 py-1.5 ${sideColor} font-medium">${e.side || '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-400">${e.qty !== null ? e.qty : '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-500">${e.limit_price !== null ? '$' + fmt(e.limit_price) : '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-300">${e.fill_price !== null ? '$' + fmt(e.fill_price) : '—'}</td>
+      <td class="px-3 py-1.5">${statusEl}</td>
+      <td class="px-3 py-1.5 text-slate-500">${e.reason || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPositionSnapshots(snapshots) {
+  const tbody = document.getElementById('positions-tbody');
+  const empty = document.getElementById('positions-empty');
+
+  if (!snapshots || snapshots.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  tbody.innerHTML = snapshots.map(s => {
+    const unrealizedCls = pnlClass(s.unrealized_pnl);
+    return `<tr class="border-b border-slate-900">
+      <td class="px-3 py-1.5 text-slate-600">${fmtTimeShort(s.event_time_utc)}</td>
+      <td class="px-3 py-1.5 text-slate-300">${s.symbol || '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-400">${s.qty !== null && s.qty !== undefined ? s.qty : '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-500">${s.market_value !== null && s.market_value !== undefined ? '$' + fmt(s.market_value, 2) : '—'}</td>
+      <td class="px-3 py-1.5 text-right ${unrealizedCls}">${s.unrealized_pnl !== null && s.unrealized_pnl !== undefined ? '$' + fmt(s.unrealized_pnl, 2) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function buildPnLOpts(pnl, benchmarks, height) {
+  const data = pnl.map(p => ({ x: new Date(p.event_time_utc).getTime(), y: p.cumulative_pnl }));
+  const finalPnL = pnl[pnl.length - 1].cumulative_pnl;
+  const lineColor = finalPnL >= 0 ? '#22c55e' : '#ef4444';
+
+  const series = [{ name: 'Strategy PnL', data }];
+  const colors = [lineColor];
+  const dashArray = [0];
+
+  if (benchmarks && benchmarks.points && benchmarks.points.length > 0) {
+    const spyData = benchmarks.points
+      .filter(p => p.spy_pnl !== null)
+      .map(p => ({ x: new Date(p.timestamp).getTime(), y: p.spy_pnl }));
+    const symbolData = benchmarks.points
+      .filter(p => p.symbol_pnl !== null)
+      .map(p => ({ x: new Date(p.timestamp).getTime(), y: p.symbol_pnl }));
+
+    if (spyData.length > 0) {
+      series.push({ name: 'SPY Buy-Hold', data: spyData });
+      colors.push('rgba(245, 158, 11, 0.55)');
+      dashArray.push(0);
+    }
+    if (symbolData.length > 0 && benchmarks.symbol !== 'SPY') {
+      series.push({ name: `${benchmarks.symbol} Buy-Hold`, data: symbolData });
+      colors.push('rgba(139, 92, 246, 0.55)');
+      dashArray.push(0);
+    }
+  }
+
+  return {
+    ...deepClone(darkBase),
+    series,
+    chart: { ...deepClone(darkBase.chart), type: 'line', height },
+    colors,
+    stroke: { width: 2, curve: 'smooth', dashArray },
+    xaxis: { type: 'datetime', labels: { style: { fontSize: '11px' }, datetimeUTC: false } },
+    yaxis: { labels: { style: { fontSize: '11px' }, formatter: v => '$' + v.toFixed(0) } },
+    legend: {
+      show: series.length > 1,
+      position: 'top',
+      horizontalAlign: 'right',
+      fontSize: '11px',
+      labels: { colors: '#94a3b8' },
+      markers: { width: 8, height: 8 },
+    },
+    dataLabels: { enabled: false },
+    markers: { size: 0 },
+    tooltip: {
+      x: { format: 'MMM dd HH:mm' },
+      y: { formatter: v => '$' + v.toFixed(2) },
+    },
+  };
+}
+
+function renderPnLChart(pnl, benchmarks) {
+  state.pnlCache = { pnl, benchmarks };
+  const chartEl = document.getElementById('chart-pnl');
+  const emptyEl = document.getElementById('pnl-empty');
+
+  if (pnl.length === 0) {
+    chartEl.innerHTML = '';
+    emptyEl.classList.remove('hidden');
+    document.getElementById('btn-expand-chart').classList.add('hidden');
+    if (state.charts.pnl) { state.charts.pnl.destroy(); state.charts.pnl = null; }
+    return;
+  }
+  emptyEl.classList.add('hidden');
+  document.getElementById('btn-expand-chart').classList.remove('hidden');
+
+  const opts = buildPnLOpts(pnl, benchmarks, 200);
+  if (!state.charts.pnl) {
+    state.charts.pnl = new ApexCharts(chartEl, opts);
+    state.charts.pnl.render();
+  } else {
+    state.charts.pnl.updateOptions(opts);
+  }
+}
+
+function openChartFullscreen() {
+  const { pnl, benchmarks } = state.pnlCache;
+  if (!pnl || pnl.length === 0) return;
+  document.getElementById('chart-modal').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  if (state.charts.pnlModal) { state.charts.pnlModal.destroy(); state.charts.pnlModal = null; }
+  state.charts.pnlModal = new ApexCharts(
+    document.getElementById('chart-pnl-modal'),
+    buildPnLOpts(pnl, benchmarks, window.innerHeight - 80)
+  );
+  state.charts.pnlModal.render();
+}
+
+function closeChartFullscreen() {
+  document.getElementById('chart-modal').classList.add('hidden');
+  document.body.style.overflow = '';
+  if (state.charts.pnlModal) { state.charts.pnlModal.destroy(); state.charts.pnlModal = null; }
+}
+
+function closeDetail() {
+  state.selectedRunId = null;
+  document.getElementById('detail-wrapper').style.width = '0';
+  document.getElementById('detail-open-page').classList.add('hidden');
+  document.querySelectorAll('.run-row').forEach(tr => tr.classList.remove('selected'));
+}
+
+async function deleteRun(runId) {
+  if (!confirm('Delete this run? This cannot be undone.')) return;
+  
+  try {
+    const r = await fetch(`/api/runs/${runId}`, { method: 'DELETE' });
+    if (r.ok) {
+      // Close detail panel if this run was selected
+      if (state.selectedRunId === runId) {
+        closeDetail();
+      }
+      // Refresh the list
+      await refresh();
+    } else {
+      alert('Failed to delete run');
+    }
+  } catch (e) {
+    alert('Error deleting run: ' + e.message);
+  }
+}
+
+// =====================================================================
+//  HELPERS
+// =====================================================================
+function deepClone(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+// =====================================================================
+//  BOOT
+// =====================================================================
+(async function init() {
+  await refresh();
+  setInterval(refresh, 30_000);
+
+  // Close sidebar when clicking outside a run row
+  document.getElementById('main-col').addEventListener('click', e => {
+    if (state.selectedRunId && !e.target.closest('.run-row')) {
+      closeDetail();
+    }
+  });
+
+  // Escape closes fullscreen modal (or sidebar)
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (!document.getElementById('chart-modal').classList.contains('hidden')) {
+        closeChartFullscreen();
+      } else if (state.selectedRunId) {
+        closeDetail();
+      }
+    }
+  });
+})();
+</script>
+</body>
+</html>

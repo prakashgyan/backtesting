@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Run Detail</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: { brand: '#3b82f6' },
+          fontFamily: { mono: ['JetBrains Mono', 'Fira Code', 'ui-monospace', 'monospace'] }
+        }
+      }
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.0/dist/apexcharts.min.js"></script>
+  <style>
+    body { font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace; }
+    .panel { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; }
+    .kpi { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px; }
+    .kpi-v { font-size: 1.15rem; font-weight: 700; line-height: 1.25; }
+    .kpi-l { font-size: 0.65rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
+    .pnl-pos { color: #4ade80; }
+    .pnl-neg { color: #f87171; }
+    .pnl-neu { color: #94a3b8; }
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; }
+    .badge-completed { background: #16a34a22; color: #4ade80; border: 1px solid #16a34a55; }
+    .badge-with-errors { background: #d9770622; color: #fb923c; border: 1px solid #d9770655; }
+    .badge-failed { background: #dc262622; color: #f87171; border: 1px solid #dc262655; }
+    .badge-running { background: #2563eb22; color: #60a5fa; border: 1px solid #2563eb55; }
+    thead th { position: sticky; top: 0; background: #0f172a; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+  <div class="max-w-7xl mx-auto px-4 py-5 space-y-5">
+    <header class="flex items-center justify-between border-b border-slate-800 pb-3">
+      <div>
+        <h1 class="text-lg font-semibold" id="title">Run Detail</h1>
+        <p class="text-xs text-slate-500 mt-1">Run ID: <span id="run-id" class="text-slate-400"></span></p>
+      </div>
+      <a href="/" class="text-xs text-brand hover:text-blue-300">back to dashboard</a>
+    </header>
+
+    <section class="panel p-4">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="meta-grid"></div>
+    </section>
+
+    <section class="grid grid-cols-2 md:grid-cols-5 gap-3" id="kpi-grid"></section>
+
+    <section class="panel p-4">
+      <div class="flex items-center justify-between mb-2">
+        <p class="text-xs text-slate-500 uppercase tracking-widest">Cumulative PnL vs Benchmarks</p>
+        <button onclick="openChartFullscreen()" id="btn-expand-chart"
+          class="text-slate-600 hover:text-slate-300 transition-colors hidden" title="Expand chart">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V6a2 2 0 012-2h2M4 16v2a2 2 0 002 2h2M16 4h2a2 2 0 012 2v2M16 20h2a2 2 0 002-2v-2"/>
+          </svg>
+        </button>
+      </div>
+      <div id="chart-pnl"></div>
+      <p id="pnl-empty" class="text-xs text-slate-600 text-center py-6 hidden">No filled trades in this run</p>
+    </section>
+
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="panel overflow-hidden">
+        <p class="text-xs text-slate-500 uppercase tracking-widest px-4 py-3 border-b border-slate-800">Order Timeline</p>
+        <div class="overflow-x-auto max-h-80">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-slate-500 text-left border-b border-slate-800">
+                <th class="px-3 py-2">Time</th>
+                <th class="px-3 py-2">Type</th>
+                <th class="px-3 py-2">Side</th>
+                <th class="px-3 py-2 text-right">Qty</th>
+                <th class="px-3 py-2 text-right">Fill</th>
+                <th class="px-3 py-2">Status</th>
+                <th class="px-3 py-2">Reason</th>
+              </tr>
+            </thead>
+            <tbody id="events-tbody"></tbody>
+          </table>
+          <p id="events-empty" class="text-xs text-slate-600 text-center py-6 hidden">No order events</p>
+        </div>
+      </div>
+
+      <div class="panel overflow-hidden">
+        <p class="text-xs text-slate-500 uppercase tracking-widest px-4 py-3 border-b border-slate-800">Position Snapshots</p>
+        <div class="overflow-x-auto max-h-80">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-slate-500 text-left border-b border-slate-800">
+                <th class="px-3 py-2">Time</th>
+                <th class="px-3 py-2">Symbol</th>
+                <th class="px-3 py-2 text-right">Qty</th>
+                <th class="px-3 py-2 text-right">Mkt Value</th>
+                <th class="px-3 py-2 text-right">Unrealized</th>
+              </tr>
+            </thead>
+            <tbody id="positions-tbody"></tbody>
+          </table>
+          <p id="positions-empty" class="text-xs text-slate-600 text-center py-6 hidden">No position snapshots recorded for this run</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+<!-- ===================== FULLSCREEN CHART MODAL ===================== -->
+<div id="chart-modal" class="hidden fixed inset-0 z-50 bg-slate-950 flex flex-col">
+  <div class="shrink-0 flex items-center justify-between px-6 py-3 border-b border-slate-800">
+    <p class="text-xs text-slate-400 uppercase tracking-widest">Cumulative PnL vs Benchmarks</p>
+    <button onclick="closeChartFullscreen()" class="text-slate-500 hover:text-slate-200 text-2xl leading-none transition-colors" title="Close">&times;</button>
+  </div>
+  <div class="flex-1 p-5 min-h-0">
+    <div id="chart-pnl-modal"></div>
+  </div>
+</div>
+
+<script>
+const runId = '__RUN_ID__';
+let _pnlModalChart = null;
+let _pnlCache = { pnl: [], benchmarks: null };
+
+function fmt(v, decimals = 2, suffix = '') {
+  if (v === null || v === undefined) return '—';
+  return Number(v).toFixed(decimals) + suffix;
+}
+
+function fmtDuration(secs) {
+  if (secs === null || secs === undefined) return '—';
+  if (secs < 60) return secs.toFixed(1) + 's';
+  if (secs < 3600) return (secs / 60).toFixed(1) + 'm';
+  return (secs / 3600).toFixed(2) + 'h';
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+  } catch {
+    return iso.slice(0, 19);
+  }
+}
+
+function fmtTimeShort(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleTimeString(undefined, { hour12: false }); }
+  catch { return iso.slice(11, 19); }
+}
+
+function normalizeWinRate(winRate) {
+  if (winRate === null || winRate === undefined) return null;
+  return winRate <= 1 ? winRate * 100 : winRate;
+}
+
+function pnlClass(v) {
+  if (v === null || v === undefined) return 'pnl-neu';
+  return v > 0 ? 'pnl-pos' : v < 0 ? 'pnl-neg' : 'pnl-neu';
+}
+
+function statusBadge(status) {
+  const map = {
+    COMPLETED: 'badge-completed',
+    COMPLETED_WITH_ERRORS: 'badge-with-errors',
+    FAILED: 'badge-failed',
+    RUNNING: 'badge-running',
+  };
+  const cls = map[status] || 'badge-running';
+  const label = status === 'COMPLETED_WITH_ERRORS' ? 'W/ERRORS' : (status || '?');
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+function renderMeta(run, metrics) {
+  const meta = [
+    ['Status', statusBadge(run.status)],
+    ['Strategy', run.strategy_name || '—'],
+    ['Symbol', run.symbol || '—'],
+    ['Mode', run.mode || '—'],
+    ['Timeframe', run.timeframe || '—'],
+    ['Started', fmtTime(run.started_at_utc)],
+    ['Ended', fmtTime(run.ended_at_utc)],
+    ['Duration', fmtDuration(run.elapsed_seconds)],
+    ['Events', metrics.events_count],
+    ['Requested', metrics.requested_orders],
+    ['Filled', metrics.filled_orders],
+    ['Rejected', metrics.rejected_orders],
+  ];
+  document.getElementById('meta-grid').innerHTML = meta.map(([k, v]) => `
+    <div class="kpi">
+      <div class="text-xs text-slate-500 uppercase tracking-widest">${k}</div>
+      <div class="text-sm mt-1 text-slate-200">${v}</div>
+    </div>
+  `).join('');
+}
+
+function renderKpis(run, metrics) {
+  const totalPnl = metrics.total_pnl ?? run.total_pnl;
+  const returnsPct = metrics.returns_pct ?? run.returns_pct;
+  const sharpe = metrics.sharpe_ratio ?? run.sharpe_ratio;
+  const drawdown = metrics.max_drawdown ?? run.max_drawdown;
+  const winRate = normalizeWinRate(metrics.win_rate ?? run.win_rate);
+  const profitFactor = metrics.profit_factor ?? run.profit_factor;
+
+  const cards = [
+    ['Total PnL', totalPnl !== null ? '$' + fmt(totalPnl, 2) : '—', pnlClass(totalPnl)],
+    ['Returns %', returnsPct !== null ? fmt(returnsPct, 2) + '%' : '—', pnlClass(returnsPct)],
+    ['Win Rate', winRate !== null ? fmt(winRate, 1) + '%' : '—', winRate !== null ? pnlClass(winRate - 50) : ''],
+    ['Sharpe', sharpe !== null ? fmt(sharpe, 2) : '—', ''],
+    ['Max Drawdown', drawdown !== null ? fmt(drawdown, 2) + '%' : '—', 'pnl-neg'],
+    ['Profit Factor', profitFactor !== null ? fmt(profitFactor, 2) : '—', ''],
+    ['Closed Trades', metrics.closed_trades, ''],
+    ['Avg Win', metrics.avg_win !== null ? '$' + fmt(metrics.avg_win, 2) : '—', 'pnl-pos'],
+    ['Avg Loss', metrics.avg_loss !== null ? '$' + fmt(metrics.avg_loss, 2) : '—', 'pnl-neg'],
+    ['Bars Processed', run.bars_processed, ''],
+  ];
+
+  document.getElementById('kpi-grid').innerHTML = cards.map(([label, value, cls]) => `
+    <div class="kpi">
+      <div class="kpi-v ${cls}">${value}</div>
+      <div class="kpi-l">${label}</div>
+    </div>
+  `).join('');
+}
+
+function renderEvents(events) {
+  const orderEvents = events.filter(e => e.event_type === 'ORDER_REQUESTED' || e.event_type === 'ORDER_RESULT' || e.event_type === 'ORDER_FAILED');
+  const tbody = document.getElementById('events-tbody');
+  const empty = document.getElementById('events-empty');
+
+  if (orderEvents.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  tbody.innerHTML = orderEvents.map(e => {
+    let statusEl = e.status || '—';
+    if (e.status === 'FILLED') statusEl = '<span class="text-green-400">FILLED</span>';
+    if (e.status === 'REJECTED') statusEl = '<span class="text-red-400">REJECTED</span>';
+    return `<tr class="border-b border-slate-900">
+      <td class="px-3 py-1.5 text-slate-600">${fmtTimeShort(e.event_time_utc)}</td>
+      <td class="px-3 py-1.5 text-slate-300">${e.event_type.replace('ORDER_', '')}</td>
+      <td class="px-3 py-1.5 text-slate-400">${e.side || '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-400">${e.qty !== null ? e.qty : '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-300">${e.fill_price !== null ? '$' + fmt(e.fill_price, 2) : '—'}</td>
+      <td class="px-3 py-1.5">${statusEl}</td>
+      <td class="px-3 py-1.5 text-slate-500">${e.reason || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPositions(snapshots) {
+  const tbody = document.getElementById('positions-tbody');
+  const empty = document.getElementById('positions-empty');
+
+  if (!snapshots || snapshots.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  tbody.innerHTML = snapshots.map(s => `
+    <tr class="border-b border-slate-900">
+      <td class="px-3 py-1.5 text-slate-600">${fmtTimeShort(s.event_time_utc)}</td>
+      <td class="px-3 py-1.5 text-slate-300">${s.symbol || '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-400">${s.qty !== null && s.qty !== undefined ? s.qty : '—'}</td>
+      <td class="px-3 py-1.5 text-right text-slate-500">${s.market_value !== null && s.market_value !== undefined ? '$' + fmt(s.market_value, 2) : '—'}</td>
+      <td class="px-3 py-1.5 text-right ${pnlClass(s.unrealized_pnl)}">${s.unrealized_pnl !== null && s.unrealized_pnl !== undefined ? '$' + fmt(s.unrealized_pnl, 2) : '—'}</td>
+    </tr>
+  `).join('');
+}
+
+function buildPnlOpts(points, benchmarks, height) {
+  const finalPnl = points[points.length - 1].cumulative_pnl;
+  const lineColor = finalPnl >= 0 ? '#22c55e' : '#ef4444';
+  const strategyData = points.map(p => ({ x: new Date(p.event_time_utc).getTime(), y: p.cumulative_pnl }));
+
+  const series = [{ name: 'Strategy PnL', data: strategyData }];
+  const colors = [lineColor];
+  const dashArray = [0];
+
+  if (benchmarks && benchmarks.points && benchmarks.points.length > 0) {
+    const spyData = benchmarks.points
+      .filter(p => p.spy_pnl !== null)
+      .map(p => ({ x: new Date(p.timestamp).getTime(), y: p.spy_pnl }));
+    const symbolData = benchmarks.points
+      .filter(p => p.symbol_pnl !== null)
+      .map(p => ({ x: new Date(p.timestamp).getTime(), y: p.symbol_pnl }));
+
+    if (spyData.length > 0) {
+      series.push({ name: 'SPY Buy-Hold', data: spyData });
+      colors.push('rgba(245, 158, 11, 0.55)');
+      dashArray.push(0);
+    }
+    if (symbolData.length > 0 && benchmarks.symbol !== 'SPY') {
+      series.push({ name: `${benchmarks.symbol} Buy-Hold`, data: symbolData });
+      colors.push('rgba(139, 92, 246, 0.55)');
+      dashArray.push(0);
+    }
+  }
+
+  return {
+    theme: { mode: 'dark' },
+    chart: { type: 'line', height, toolbar: { show: false }, animations: { enabled: false }, background: 'transparent' },
+    grid: { borderColor: '#1e293b', strokeDashArray: 3 },
+    series,
+    colors,
+    stroke: { width: 2, curve: 'smooth', dashArray },
+    xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
+    yaxis: { labels: { formatter: v => '$' + v.toFixed(0) } },
+    legend: {
+      show: series.length > 1,
+      position: 'top',
+      horizontalAlign: 'right',
+      fontSize: '11px',
+      labels: { colors: '#94a3b8' },
+      markers: { width: 10, height: 10 },
+    },
+    dataLabels: { enabled: false },
+    tooltip: {
+      x: { format: 'MMM dd HH:mm' },
+      y: { formatter: v => '$' + v.toFixed(2) },
+    },
+  };
+}
+
+function renderPnlChart(points, benchmarks) {
+  _pnlCache = { pnl: points, benchmarks };
+  const el = document.getElementById('chart-pnl');
+  const empty = document.getElementById('pnl-empty');
+
+  if (!points || points.length === 0) {
+    empty.classList.remove('hidden');
+    el.innerHTML = '';
+    return;
+  }
+
+  empty.classList.add('hidden');
+  document.getElementById('btn-expand-chart').classList.remove('hidden');
+  new ApexCharts(el, buildPnlOpts(points, benchmarks, 280)).render();
+}
+
+function openChartFullscreen() {
+  const { pnl, benchmarks } = _pnlCache;
+  if (!pnl || pnl.length === 0) return;
+  document.getElementById('chart-modal').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  if (_pnlModalChart) { _pnlModalChart.destroy(); _pnlModalChart = null; }
+  _pnlModalChart = new ApexCharts(
+    document.getElementById('chart-pnl-modal'),
+    buildPnlOpts(pnl, benchmarks, window.innerHeight - 80)
+  );
+  _pnlModalChart.render();
+}
+
+function closeChartFullscreen() {
+  document.getElementById('chart-modal').classList.add('hidden');
+  document.body.style.overflow = '';
+  if (_pnlModalChart) { _pnlModalChart.destroy(); _pnlModalChart = null; }
+}
+
+(async function init() {
+  document.getElementById('run-id').textContent = runId;
+
+  const [run, events, pnl, detailMetrics, benchmarks] = await Promise.all([
+    fetchJSON(`/api/runs/${runId}`),
+    fetchJSON(`/api/runs/${runId}/events`),
+    fetchJSON(`/api/runs/${runId}/pnl`),
+    fetchJSON(`/api/runs/${runId}/detail-metrics`),
+    fetchJSON(`/api/runs/${runId}/benchmarks`),
+  ]);
+
+  if (!run) {
+    document.getElementById('title').textContent = 'Run not found';
+    return;
+  }
+
+  const title = `${run.strategy_name || 'Strategy'}${run.symbol ? ' / ' + run.symbol : ''}`;
+  document.getElementById('title').textContent = title;
+
+  const metrics = detailMetrics || {
+    events_count: 0,
+    requested_orders: 0,
+    filled_orders: 0,
+    rejected_orders: 0,
+    closed_trades: 0,
+  };
+
+  renderMeta(run, metrics);
+  renderKpis(run, metrics);
+  renderEvents(events || []);
+  renderPositions(metrics.position_snapshots || []);
+  renderPnlChart(pnl || [], benchmarks);
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeChartFullscreen();
+  });
+})();
+</script>
+</body>
+</html>
