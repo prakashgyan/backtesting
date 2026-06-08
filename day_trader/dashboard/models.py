@@ -68,6 +68,15 @@ class PnLPoint(BaseModel):
     side: str
     qty: float
     fill_price: float
+    symbol: str = ""
+    symbol_cumulative_pnl: float = 0.0
+
+
+class PnLSeries(BaseModel):
+    """PnL time series with optional per-symbol breakdown."""
+
+    points: list[PnLPoint]
+    by_symbol: dict[str, list[PnLPoint]] = {}
 
 
 class SummaryStats(BaseModel):
@@ -118,7 +127,6 @@ class RunDetailMetrics(BaseModel):
     max_drawdown: Optional[float]
     sharpe_ratio: Optional[float]
     profit_factor: Optional[float]
-    position_snapshots: list[PositionSnapshot]
 
 
 class BenchmarkPoint(BaseModel):

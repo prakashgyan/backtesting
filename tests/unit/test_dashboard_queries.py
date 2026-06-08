@@ -135,7 +135,6 @@ def test_fetch_run_detail_metrics_uses_fallback_when_csv_missing(tmp_path) -> No
     assert metrics["total_pnl"] == 100.0
     assert metrics["win_rate"] == 100.0
     assert metrics["returns_pct"] == 0.1
-    assert len(metrics["position_snapshots"]) == 1
 
 
 def test_fetch_run_detail_metrics_prefers_csv_values(tmp_path) -> None:

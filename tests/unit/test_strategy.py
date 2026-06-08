@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 from day_trader.strategy.base import Strategy
 from day_trader.strategy.examples.simple_sma import SimpleSMAStrategy
+from day_trader.strategy.examples.rsi_strategy import RSIStrategy
+from day_trader.strategy.exp.mean_reversion import MeanReversionStrategy
 from day_trader.models import Bar, OrderSide
 from day_trader.core.exceptions import StrategyError
 from tests.unit.test_engine import MockBroker
@@ -97,6 +99,11 @@ class TestStrategyBase:
         with pytest.raises(ValueError):
             strategy.signal = "INVALID"
 
+    def test_strategy_default_multi_symbol_support_is_false(self) -> None:
+        """Base strategy should be single-symbol by default."""
+        strategy = DummyStrategy()
+        assert strategy.supports_multi_symbol() is False
+
 
 class TestSimpleSMAStrategy:
     """Test cases for SimpleSMAStrategy."""
@@ -179,3 +186,16 @@ class TestSimpleSMAStrategy:
         assert strategy.bars_count == 5
 
         await broker.disconnect()
+
+
+class TestStrategyMultiSymbolCapabilities:
+    """Capability flags should reflect actual symbol-state safety."""
+
+    def test_simple_sma_is_not_multi_symbol_safe(self) -> None:
+        assert SimpleSMAStrategy().supports_multi_symbol() is False
+
+    def test_rsi_is_multi_symbol_safe(self) -> None:
+        assert RSIStrategy().supports_multi_symbol() is True
+
+    def test_mean_reversion_is_multi_symbol_safe(self) -> None:
+        assert MeanReversionStrategy().supports_multi_symbol() is True

@@ -85,6 +85,10 @@ class RSIStrategy(Strategy):
             "timeframe": "1h",
         }
 
+    def supports_multi_symbol(self) -> bool:
+        """RSI implementation keeps per-symbol state, so it is multi-safe."""
+        return True
+
     async def on_bar(self, bar: Bar) -> None:
         """Process bar and check RSI signal.
 

@@ -68,6 +68,15 @@ class Strategy(StrategyInterface):
         """
         return dataclasses.asdict(RunDefaults())
 
+    def supports_multi_symbol(self) -> bool:
+        """Return whether this strategy is safe for multi-symbol streams.
+
+        Strategies that maintain shared rolling state without a per-symbol
+        state map should keep this as False. Multi-symbol aware strategies
+        should override and return True.
+        """
+        return False
+
     @abstractmethod
     async def on_bar(self, bar: Bar) -> None:
         """Process incoming bar and generate trading signals.

@@ -64,45 +64,25 @@
       <p id="pnl-empty" class="text-xs text-slate-600 text-center py-6 hidden">No filled trades in this run</p>
     </section>
 
-    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div class="panel overflow-hidden">
-        <p class="text-xs text-slate-500 uppercase tracking-widest px-4 py-3 border-b border-slate-800">Order Timeline</p>
-        <div class="overflow-x-auto max-h-80">
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="text-slate-500 text-left border-b border-slate-800">
-                <th class="px-3 py-2">Time</th>
-                <th class="px-3 py-2">Type</th>
-                <th class="px-3 py-2">Side</th>
-                <th class="px-3 py-2 text-right">Qty</th>
-                <th class="px-3 py-2 text-right">Fill</th>
-                <th class="px-3 py-2">Status</th>
-                <th class="px-3 py-2">Reason</th>
-              </tr>
-            </thead>
-            <tbody id="events-tbody"></tbody>
-          </table>
-          <p id="events-empty" class="text-xs text-slate-600 text-center py-6 hidden">No order events</p>
-        </div>
-      </div>
-
-      <div class="panel overflow-hidden">
-        <p class="text-xs text-slate-500 uppercase tracking-widest px-4 py-3 border-b border-slate-800">Position Snapshots</p>
-        <div class="overflow-x-auto max-h-80">
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="text-slate-500 text-left border-b border-slate-800">
-                <th class="px-3 py-2">Time</th>
-                <th class="px-3 py-2">Symbol</th>
-                <th class="px-3 py-2 text-right">Qty</th>
-                <th class="px-3 py-2 text-right">Mkt Value</th>
-                <th class="px-3 py-2 text-right">Unrealized</th>
-              </tr>
-            </thead>
-            <tbody id="positions-tbody"></tbody>
-          </table>
-          <p id="positions-empty" class="text-xs text-slate-600 text-center py-6 hidden">No position snapshots recorded for this run</p>
-        </div>
+    <section class="panel overflow-hidden">
+      <p class="text-xs text-slate-500 uppercase tracking-widest px-4 py-3 border-b border-slate-800">Order Timeline</p>
+      <div class="overflow-x-auto max-h-96">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-slate-500 text-left border-b border-slate-800">
+              <th class="px-3 py-2">Time</th>
+              <th class="px-3 py-2">Symbol</th>
+              <th class="px-3 py-2">Type</th>
+              <th class="px-3 py-2">Side</th>
+              <th class="px-3 py-2 text-right">Qty</th>
+              <th class="px-3 py-2 text-right">Fill</th>
+              <th class="px-3 py-2">Status</th>
+              <th class="px-3 py-2">Reason</th>
+            </tr>
+          </thead>
+          <tbody id="events-tbody"></tbody>
+        </table>
+        <p id="events-empty" class="text-xs text-slate-600 text-center py-6 hidden">No order events</p>
       </div>
     </section>
   </div>
@@ -121,7 +101,8 @@
 <script>
 const runId = '__RUN_ID__';
 let _pnlModalChart = null;
-let _pnlCache = { pnl: [], benchmarks: null };
+let _pnlCache = { pnlSeries: null, benchmarks: null };
+const SYMBOL_COLORS = ['#38bdf8','#818cf8','#34d399','#fb923c','#f472b6','#facc15'];
 
 function fmt(v, decimals = 2, suffix = '') {
   if (v === null || v === undefined) return '—';
@@ -184,11 +165,18 @@ async function fetchJSON(url) {
   }
 }
 
+function renderSymbolMeta(symbol) {
+  if (!symbol) return '—';
+  const parts = symbol.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length === 1) return parts[0];
+  return parts.join(' · ');
+}
+
 function renderMeta(run, metrics) {
   const meta = [
     ['Status', statusBadge(run.status)],
     ['Strategy', run.strategy_name || '—'],
-    ['Symbol', run.symbol || '—'],
+    ['Symbol', renderSymbolMeta(run.symbol)],
     ['Mode', run.mode || '—'],
     ['Timeframe', run.timeframe || '—'],
     ['Started', fmtTime(run.started_at_utc)],
@@ -252,10 +240,12 @@ function renderEvents(events) {
     let statusEl = e.status || '—';
     if (e.status === 'FILLED') statusEl = '<span class="text-green-400">FILLED</span>';
     if (e.status === 'REJECTED') statusEl = '<span class="text-red-400">REJECTED</span>';
+    const sideColor = e.side === 'BUY' ? 'text-blue-400' : 'text-purple-400';
     return `<tr class="border-b border-slate-900">
-      <td class="px-3 py-1.5 text-slate-600">${fmtTimeShort(e.event_time_utc)}</td>
-      <td class="px-3 py-1.5 text-slate-300">${e.event_type.replace('ORDER_', '')}</td>
-      <td class="px-3 py-1.5 text-slate-400">${e.side || '—'}</td>
+      <td class="px-3 py-1.5 text-slate-500 whitespace-nowrap">${fmtTime(e.event_time_utc)}</td>
+      <td class="px-3 py-1.5 text-slate-300 font-medium">${e.symbol || '—'}</td>
+      <td class="px-3 py-1.5 text-slate-400">${e.event_type.replace('ORDER_', '')}</td>
+      <td class="px-3 py-1.5 ${sideColor} font-medium">${e.side || '—'}</td>
       <td class="px-3 py-1.5 text-right text-slate-400">${e.qty !== null ? e.qty : '—'}</td>
       <td class="px-3 py-1.5 text-right text-slate-300">${e.fill_price !== null ? '$' + fmt(e.fill_price, 2) : '—'}</td>
       <td class="px-3 py-1.5">${statusEl}</td>
@@ -264,36 +254,31 @@ function renderEvents(events) {
   }).join('');
 }
 
-function renderPositions(snapshots) {
-  const tbody = document.getElementById('positions-tbody');
-  const empty = document.getElementById('positions-empty');
+function buildPnlOpts(pnlSeries, benchmarks, height) {
+  const points = (pnlSeries && pnlSeries.points) || [];
+  const bySymbol = (pnlSeries && pnlSeries.by_symbol) || {};
+  const isMulti = Object.keys(bySymbol).length > 1;
 
-  if (!snapshots || snapshots.length === 0) {
-    tbody.innerHTML = '';
-    empty.classList.remove('hidden');
-    return;
+  const series = [];
+  const colors = [];
+  const dashArray = [];
+
+  if (isMulti) {
+    Object.entries(bySymbol).forEach(([sym, pts], i) => {
+      const color = SYMBOL_COLORS[i % SYMBOL_COLORS.length];
+      const data = pts.map(p => ({ x: new Date(p.event_time_utc).getTime(), y: p.symbol_cumulative_pnl }));
+      series.push({ name: sym, data });
+      colors.push(color);
+      dashArray.push(0);
+    });
+  } else {
+    const finalPnl = points[points.length - 1].cumulative_pnl;
+    const lineColor = finalPnl >= 0 ? '#22c55e' : '#ef4444';
+    const data = points.map(p => ({ x: new Date(p.event_time_utc).getTime(), y: p.cumulative_pnl }));
+    series.push({ name: 'Strategy PnL', data });
+    colors.push(lineColor);
+    dashArray.push(0);
   }
-
-  empty.classList.add('hidden');
-  tbody.innerHTML = snapshots.map(s => `
-    <tr class="border-b border-slate-900">
-      <td class="px-3 py-1.5 text-slate-600">${fmtTimeShort(s.event_time_utc)}</td>
-      <td class="px-3 py-1.5 text-slate-300">${s.symbol || '—'}</td>
-      <td class="px-3 py-1.5 text-right text-slate-400">${s.qty !== null && s.qty !== undefined ? s.qty : '—'}</td>
-      <td class="px-3 py-1.5 text-right text-slate-500">${s.market_value !== null && s.market_value !== undefined ? '$' + fmt(s.market_value, 2) : '—'}</td>
-      <td class="px-3 py-1.5 text-right ${pnlClass(s.unrealized_pnl)}">${s.unrealized_pnl !== null && s.unrealized_pnl !== undefined ? '$' + fmt(s.unrealized_pnl, 2) : '—'}</td>
-    </tr>
-  `).join('');
-}
-
-function buildPnlOpts(points, benchmarks, height) {
-  const finalPnl = points[points.length - 1].cumulative_pnl;
-  const lineColor = finalPnl >= 0 ? '#22c55e' : '#ef4444';
-  const strategyData = points.map(p => ({ x: new Date(p.event_time_utc).getTime(), y: p.cumulative_pnl }));
-
-  const series = [{ name: 'Strategy PnL', data: strategyData }];
-  const colors = [lineColor];
-  const dashArray = [0];
 
   if (benchmarks && benchmarks.points && benchmarks.points.length > 0) {
     const spyData = benchmarks.points
@@ -305,13 +290,13 @@ function buildPnlOpts(points, benchmarks, height) {
 
     if (spyData.length > 0) {
       series.push({ name: 'SPY Buy-Hold', data: spyData });
-      colors.push('rgba(245, 158, 11, 0.55)');
-      dashArray.push(0);
+      colors.push('rgba(245, 158, 11, 0.45)');
+      dashArray.push(4);
     }
-    if (symbolData.length > 0 && benchmarks.symbol !== 'SPY') {
+    if (!isMulti && symbolData.length > 0 && benchmarks.symbol !== 'SPY') {
       series.push({ name: `${benchmarks.symbol} Buy-Hold`, data: symbolData });
-      colors.push('rgba(139, 92, 246, 0.55)');
-      dashArray.push(0);
+      colors.push('rgba(139, 92, 246, 0.45)');
+      dashArray.push(4);
     }
   }
 
@@ -340,12 +325,13 @@ function buildPnlOpts(points, benchmarks, height) {
   };
 }
 
-function renderPnlChart(points, benchmarks) {
-  _pnlCache = { pnl: points, benchmarks };
+function renderPnlChart(pnlSeries, benchmarks) {
+  _pnlCache = { pnlSeries, benchmarks };
   const el = document.getElementById('chart-pnl');
   const empty = document.getElementById('pnl-empty');
+  const points = (pnlSeries && pnlSeries.points) || [];
 
-  if (!points || points.length === 0) {
+  if (points.length === 0) {
     empty.classList.remove('hidden');
     el.innerHTML = '';
     return;
@@ -353,18 +339,19 @@ function renderPnlChart(points, benchmarks) {
 
   empty.classList.add('hidden');
   document.getElementById('btn-expand-chart').classList.remove('hidden');
-  new ApexCharts(el, buildPnlOpts(points, benchmarks, 280)).render();
+  new ApexCharts(el, buildPnlOpts(pnlSeries, benchmarks, 280)).render();
 }
 
 function openChartFullscreen() {
-  const { pnl, benchmarks } = _pnlCache;
-  if (!pnl || pnl.length === 0) return;
+  const { pnlSeries, benchmarks } = _pnlCache;
+  const points = (pnlSeries && pnlSeries.points) || [];
+  if (points.length === 0) return;
   document.getElementById('chart-modal').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   if (_pnlModalChart) { _pnlModalChart.destroy(); _pnlModalChart = null; }
   _pnlModalChart = new ApexCharts(
     document.getElementById('chart-pnl-modal'),
-    buildPnlOpts(pnl, benchmarks, window.innerHeight - 80)
+    buildPnlOpts(pnlSeries, benchmarks, window.innerHeight - 80)
   );
   _pnlModalChart.render();
 }
@@ -378,7 +365,7 @@ function closeChartFullscreen() {
 (async function init() {
   document.getElementById('run-id').textContent = runId;
 
-  const [run, events, pnl, detailMetrics, benchmarks] = await Promise.all([
+  const [run, events, pnlSeries, detailMetrics, benchmarks] = await Promise.all([
     fetchJSON(`/api/runs/${runId}`),
     fetchJSON(`/api/runs/${runId}/events`),
     fetchJSON(`/api/runs/${runId}/pnl`),
@@ -405,8 +392,7 @@ function closeChartFullscreen() {
   renderMeta(run, metrics);
   renderKpis(run, metrics);
   renderEvents(events || []);
-  renderPositions(metrics.position_snapshots || []);
-  renderPnlChart(pnl || [], benchmarks);
+  renderPnlChart(pnlSeries, benchmarks);
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeChartFullscreen();

@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -21,7 +21,7 @@ from day_trader.engine.engine import Engine
 from day_trader.logging import get_logger
 from day_trader.strategy.loader import StrategyLoader
 from day_trader.ui import CLIOutput
-from day_trader.utils.helpers import DataFetcher, save_bars_to_csv, load_bars_from_csv, get_last_n_days  # DataFetcher used by fetch_data command
+from day_trader.utils.helpers import DataFetcher, save_bars_to_csv, load_bars_from_csv, load_bars_from_csv_multi, get_last_n_days  # DataFetcher used by fetch_data command
 
 logger = get_logger(__name__)
 
@@ -77,6 +77,36 @@ def _create_broker(mode: str, settings: Settings) -> BrokerInterface:
     if not typer.confirm(msg):
         raise typer.Exit(code=0)
     return AlpacaBroker(settings)
+
+
+def _parse_symbols(symbol_text: str) -> List[str]:
+    """Parse comma-separated symbols into a deduplicated ordered list."""
+    symbols: List[str] = []
+    for token in symbol_text.split(","):
+        clean = token.strip()
+        if not clean:
+            raise ValueError(
+                "Invalid --symbol value: empty symbol token found. "
+                "Example: --symbol SPY,QQQ,IWM"
+            )
+        if clean not in symbols:
+            symbols.append(clean)
+
+    if not symbols:
+        raise ValueError("At least one symbol is required")
+
+    return symbols
+
+
+def _supports_multi_symbol(strategy_instance: object) -> bool:
+    """Return True when a strategy explicitly advertises multi-symbol safety."""
+    checker = getattr(strategy_instance, "supports_multi_symbol", None)
+    if not callable(checker):
+        return False
+    try:
+        return bool(checker())
+    except Exception:
+        return False
 
 
 @app.command()
@@ -157,22 +187,33 @@ def run(
             return global_defaults[name]
 
         resolved_symbol = str(_resolve_param("symbol", symbol))
+        resolved_symbols = _parse_symbols(resolved_symbol)
         resolved_mode = str(_resolve_param("mode", mode)).lower()
         resolved_days_value = _resolve_param("days", days)
         resolved_days = int(resolved_days_value) if resolved_days_value is not None else None
         resolved_speed = float(_resolve_param("speed", speed))
         resolved_timeframe = str(_resolve_param("timeframe", timeframe))
+        resolved_symbol_display = ",".join(resolved_symbols)
 
         if resolved_mode not in ("live", "replay"):
             ui.print(f"Invalid mode: {resolved_mode}. Must be live or replay.", err=True)
             raise typer.Exit(code=1)
 
+        if len(resolved_symbols) > 1 and not _supports_multi_symbol(strategy_instance):
+            ui.print(
+                "Strategy does not support multi-symbol runs. "
+                "Use one symbol, or implement supports_multi_symbol() -> True "
+                "with per-symbol state isolation.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
         # Get configuration
         settings = get_settings()
         logger.info(
-            "Trading engine starting - Mode: %s, Symbol: %s",
+            "Trading engine starting - Mode: %s, Symbols: %s",
             resolved_mode,
-            resolved_symbol,
+            resolved_symbol_display,
         )
 
         # Create data stream
@@ -181,23 +222,46 @@ def run(
         if resolved_mode == "replay":
             if data_file and Path(data_file).exists():
                 logger.info("Loading data from %s", data_file)
-                bars = load_bars_from_csv(Path(data_file), resolved_symbol)
+                if len(resolved_symbols) > 1:
+                    bars = load_bars_from_csv_multi(Path(data_file), symbols=resolved_symbols)
+                else:
+                    bars = load_bars_from_csv(Path(data_file), resolved_symbols[0])
             elif resolved_days:
                 n_days = resolved_days
                 start_date, end_date = get_last_n_days(n_days)
                 cache = DataCache(settings)
-                info = cache.cache_info(resolved_symbol, resolved_timeframe, start_date, end_date)
-                if info["fresh"]:
-                    ui.print(
-                        f"Loading from cache (age {info['age_hours']:.1f}h < ttl {info['ttl_hours']:.0f}h)...",
-                        style="cyan",
+                bars = []
+                for current_symbol in resolved_symbols:
+                    info = cache.cache_info(
+                        current_symbol,
+                        resolved_timeframe,
+                        start_date,
+                        end_date,
                     )
+                    if info["fresh"]:
+                        ui.print(
+                            f"[{current_symbol}] cache hit "
+                            f"(age {info['age_hours']:.1f}h < ttl {info['ttl_hours']:.0f}h)",
+                            style="cyan",
+                        )
+                    else:
+                        ui.print(f"[{current_symbol}] fetching historical bars...", style="cyan")
+                    symbol_bars = cache.fetch_bars(
+                        current_symbol,
+                        start_date,
+                        end_date,
+                        resolved_timeframe,
+                    )
+                    bars.extend(symbol_bars)
+
+                bars.sort(key=lambda b: (b.timestamp, b.symbol))
+                if len(resolved_symbols) == 1:
+                    ui.print(f"Loaded {len(bars)} bars for replay", style="green")
                 else:
-                    ui.print("Fetching historical bars from Alpaca...", style="cyan")
-                bars = cache.fetch_bars(
-                    resolved_symbol, start_date, end_date, resolved_timeframe
-                )
-                ui.print(f"Loaded {len(bars)} bars for replay", style="green")
+                    ui.print(
+                        f"Loaded {len(bars)} bars across {len(resolved_symbols)} symbols for replay",
+                        style="green",
+                    )
             else:
                 ui.print(
                     "No data source specified. Use --days or --data-file.", err=True
@@ -209,7 +273,7 @@ def run(
             bars = []  # No bars for live mode
             # Live mode
             from day_trader.data.live import LiveStream
-            stream = LiveStream(settings)
+            stream = LiveStream(settings, symbols=resolved_symbols)
 
         # Create broker via factory
         broker = _create_broker(resolved_mode, settings)
@@ -231,7 +295,8 @@ def run(
             run_metrics_csv_path=run_metrics_csv,
             run_events_db_path=run_events_db,
             run_metadata={
-                "symbol": resolved_symbol,
+                "symbol": resolved_symbols[0],
+                "symbols": resolved_symbols,
                 "mode": resolved_mode,
                 "strategy": strategy,
                 "timeframe": resolved_timeframe,
@@ -241,7 +306,7 @@ def run(
         )
 
         # Display banner
-        _display_banner(ui, resolved_symbol, resolved_mode, strategy)
+        _display_banner(ui, resolved_symbols, resolved_mode, strategy)
 
         progress: Progress | None = None
         if replay_stream is not None and replay_stream.total_bars > 0 and ui.rich_enabled:
@@ -273,6 +338,8 @@ def run(
     except KeyboardInterrupt:
         logger.info("Engine interrupted by user")
         ui.print("\nTrading engine stopped.", style="yellow")
+    except typer.Exit:
+        raise
     except Exception as e:
         logger.error(f"Error: {e}")
         ui.print(f"Error: {e}", err=True)
@@ -417,14 +484,16 @@ def account(ctx: typer.Context) -> None:
         raise typer.Exit(code=1)
 
 
-def _display_banner(ui: CLIOutput, symbol: str, mode: str, strategy: str) -> None:
+def _display_banner(ui: CLIOutput, symbols: list[str], mode: str, strategy: str) -> None:
     """Display trading engine banner."""
+    symbol_label = "Symbols" if len(symbols) > 1 else "Symbol"
+    symbol_value = ",".join(symbols)
     if ui.rich_enabled:
         ui.print("\n" + "=" * 50, style="cyan bold")
         ui.print("Day Trader - Trading Engine", style="cyan bold")
         ui.print("=" * 50, style="cyan bold")
         ui.print(f"Mode:     {mode.upper()}", style="white")
-        ui.print(f"Symbol:   {symbol}", style="yellow")
+        ui.print(f"{symbol_label}:   {symbol_value}", style="yellow")
         ui.print(f"Strategy: {strategy}", style="white")
         ui.print("=" * 50 + "\n", style="cyan bold")
         return
@@ -433,7 +502,7 @@ def _display_banner(ui: CLIOutput, symbol: str, mode: str, strategy: str) -> Non
     ui.print("Day Trader - Trading Engine")
     ui.print("=" * 50)
     ui.print(f"Mode:     {mode.upper()}")
-    ui.print(f"Symbol:   {symbol}")
+    ui.print(f"{symbol_label}:   {symbol_value}")
     ui.print(f"Strategy: {strategy}")
     ui.print("=" * 50 + "\n")
 

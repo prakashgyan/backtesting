@@ -178,6 +178,13 @@ class Engine:
 
         try:
             logger.info("Starting trading engine")
+            symbols_meta = self.run_metadata.get("symbols")
+            if isinstance(symbols_meta, list) and symbols_meta:
+                logger.info(
+                    "Run symbols (%d): %s",
+                    len(symbols_meta),
+                    ",".join(str(s) for s in symbols_meta),
+                )
 
             # Connect broker
             try:

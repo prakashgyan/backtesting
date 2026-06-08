@@ -45,6 +45,29 @@ class MockDataStream(DataStream):
         self._running = False
 
 
+class MultiSymbolMockDataStream(DataStream):
+    """Mock stream that emits an interleaved multi-symbol sequence."""
+
+    def __init__(self, bars: List[Bar]):
+        super().__init__()
+        self._bars = bars
+
+    async def connect(self) -> None:
+        self._connected = True
+
+    async def disconnect(self) -> None:
+        self._connected = False
+
+    async def start(self) -> None:
+        self._running = True
+        for bar in self._bars:
+            await self._emit_bar(bar)
+        self._running = False
+
+    async def stop(self) -> None:
+        self._running = False
+
+
 class MockBroker(BrokerBase):
     """Mock broker for testing."""
 
@@ -172,3 +195,56 @@ class TestEngine:
         assert stats["bars_processed"] == 3
         assert stats["errors"] == 0
         assert stats["elapsed_seconds"] > 0
+
+    @pytest.mark.asyncio
+    async def test_engine_routes_interleaved_multi_symbol_bars(self) -> None:
+        """Engine should deliver each bar unchanged, even with mixed symbols."""
+        base_time = datetime.now(timezone.utc)
+        bars = [
+            Bar(
+                symbol="SPY",
+                timestamp=base_time,
+                open=500.0,
+                high=501.0,
+                low=499.0,
+                close=500.5,
+                volume=1000000.0,
+            ),
+            Bar(
+                symbol="QQQ",
+                timestamp=base_time,
+                open=430.0,
+                high=431.0,
+                low=429.0,
+                close=430.5,
+                volume=1000000.0,
+            ),
+            Bar(
+                symbol="IWM",
+                timestamp=base_time,
+                open=210.0,
+                high=211.0,
+                low=209.0,
+                close=210.5,
+                volume=1000000.0,
+            ),
+            Bar(
+                symbol="SPY",
+                timestamp=base_time,
+                open=501.0,
+                high=502.0,
+                low=500.0,
+                close=501.5,
+                volume=1000000.0,
+            ),
+        ]
+
+        stream = MultiSymbolMockDataStream(bars)
+        broker = MockBroker()
+        strategy = MockStrategy()
+        engine = Engine(stream, strategy, broker, run_metadata={"symbols": ["SPY", "QQQ", "IWM"]})
+
+        await engine.run()
+
+        assert engine.stats["bars_processed"] == 4
+        assert [bar.symbol for bar in strategy.bars_received] == ["SPY", "QQQ", "IWM", "SPY"]

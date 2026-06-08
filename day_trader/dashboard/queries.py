@@ -230,10 +230,15 @@ def fetch_events(run_id: str) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def compute_pnl_series(run_id: str) -> list[dict[str, Any]]:
-    """Compute cumulative PnL from FILLED ORDER_RESULT events using FIFO lot-matching."""
+def compute_pnl_series(run_id: str) -> dict[str, Any]:
+    """Compute cumulative PnL from FILLED ORDER_RESULT events using FIFO lot-matching.
+
+    Returns a dict with:
+      - ``points``: aggregate series (one point per filled trade across all symbols)
+      - ``by_symbol``: per-symbol series (only populated when >1 symbol traded)
+    """
     if not _db_exists():
-        return []
+        return {"points": [], "by_symbol": {}}
 
     conn = _get_conn()
     try:
@@ -252,8 +257,10 @@ def compute_pnl_series(run_id: str) -> list[dict[str, Any]]:
         conn.close()
 
     open_lots: dict[str, deque[tuple[float, float]]] = {}
+    symbol_cumulative: dict[str, float] = {}
     cumulative_pnl = 0.0
     points: list[dict[str, Any]] = []
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
 
     for row in rows:
         symbol: str = row["symbol"] or ""
@@ -263,6 +270,10 @@ def compute_pnl_series(run_id: str) -> list[dict[str, Any]]:
 
         if symbol not in open_lots:
             open_lots[symbol] = deque()
+        if symbol not in symbol_cumulative:
+            symbol_cumulative[symbol] = 0.0
+        if symbol not in by_symbol:
+            by_symbol[symbol] = []
 
         trade_pnl = 0.0
 
@@ -280,19 +291,26 @@ def compute_pnl_series(run_id: str) -> list[dict[str, Any]]:
                 else:
                     open_lots[symbol][0] = (lot_qty - close_qty, lot_price)
             cumulative_pnl += trade_pnl
+            symbol_cumulative[symbol] += trade_pnl
 
-        points.append(
-            {
-                "event_time_utc": row["event_time_utc"],
-                "cumulative_pnl": round(cumulative_pnl, 4),
-                "trade_pnl": round(trade_pnl, 4),
-                "side": side,
-                "qty": qty,
-                "fill_price": fill_price,
-            }
-        )
+        point: dict[str, Any] = {
+            "event_time_utc": row["event_time_utc"],
+            "cumulative_pnl": round(cumulative_pnl, 4),
+            "trade_pnl": round(trade_pnl, 4),
+            "side": side,
+            "qty": qty,
+            "fill_price": fill_price,
+            "symbol": symbol,
+            "symbol_cumulative_pnl": round(symbol_cumulative[symbol], 4),
+        }
+        points.append(point)
+        by_symbol[symbol].append(point)
 
-    return points
+    # Only return per-symbol breakdown when more than one symbol was traded
+    return {
+        "points": points,
+        "by_symbol": by_symbol if len(by_symbol) > 1 else {},
+    }
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -523,17 +541,16 @@ def fetch_run_detail_metrics(run_id: str) -> Optional[dict[str, Any]]:
         "max_drawdown": pick_metric("max_drawdown"),
         "sharpe_ratio": pick_metric("sharpe_ratio"),
         "profit_factor": pick_metric("profit_factor"),
-        "position_snapshots": _extract_position_snapshots(events),
     }
 
 
 def fetch_benchmark_series(run_id: str) -> Optional[dict[str, Any]]:
-    """Fetch benchmark comparison data (SPY and buy-hold symbol) for a run.
-    
-    Computes what the initial capital would be worth if invested in:
-    1. SPY (S&P 500 ETF) at run start
-    2. The same symbol being traded at run start (buy-and-hold)
-    
+    """Fetch benchmark comparison data for a run.
+
+    Computes what the initial capital would be worth invested in SPY (buy-and-hold).
+    For single-symbol runs, also computes the symbol's own buy-and-hold line.
+    For multi-symbol runs, only SPY is shown (portfolio buy-and-hold is ambiguous).
+
     For replay mode, uses data_start_date/data_end_date (the actual historical
     data range) instead of started_at_utc/ended_at_utc (wall-clock backtest time).
     """
@@ -541,10 +558,28 @@ def fetch_benchmark_series(run_id: str) -> Optional[dict[str, Any]]:
     if run is None:
         return None
 
-    symbol = run.get("symbol") or ""
+    # Resolve symbol list from metadata_json (authoritative) falling back to symbol column
+    metadata_json_raw = run.get("metadata_json")
+    symbols: list[str] = []
+    if metadata_json_raw:
+        try:
+            meta = json.loads(metadata_json_raw)
+            raw_symbols = meta.get("symbols")
+            if isinstance(raw_symbols, list):
+                symbols = [str(s) for s in raw_symbols if s]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if not symbols:
+        raw_sym = run.get("symbol") or ""
+        symbols = [s.strip() for s in raw_sym.split(",") if s.strip()]
+
+    is_multi = len(symbols) > 1
+    # Primary symbol for display and single-symbol buy-hold benchmark
+    symbol = symbols[0] if symbols else ""
+
     initial_capital = float(run.get("initial_capital") or 100000)
     mode = run.get("mode") or "live"
-    
+
     # For replay mode, prefer data_start_date/data_end_date (actual historical data range)
     # Fall back to started_at_utc/ended_at_utc for live mode or if data dates missing
     data_start_date_str = run.get("data_start_date")
@@ -605,9 +640,14 @@ def fetch_benchmark_series(run_id: str) -> Optional[dict[str, Any]]:
         settings = get_settings()
         cache = DataCache(settings)
 
-        # Fetch SPY and symbol daily bars (cached)
         spy_bars = cache.fetch_bars("SPY", start_date, end_date, "1d")
-        symbol_bars = cache.fetch_bars(symbol, start_date, end_date, "1d") if symbol != "SPY" else spy_bars
+        # For multi-symbol runs, skip the per-symbol buy-hold line — it's ambiguous
+        # which symbol to benchmark against a portfolio strategy.
+        symbol_bars = (
+            cache.fetch_bars(symbol, start_date, end_date, "1d")
+            if not is_multi and symbol != "SPY"
+            else None
+        )
     except Exception as e:
         return {
             "run_id": run_id,
@@ -621,7 +661,7 @@ def fetch_benchmark_series(run_id: str) -> Optional[dict[str, Any]]:
             "error": f"Failed to fetch benchmark data: {str(e)}",
         }
 
-    if not spy_bars or not symbol_bars:
+    if not spy_bars:
         return {
             "run_id": run_id,
             "symbol": symbol,
@@ -631,37 +671,36 @@ def fetch_benchmark_series(run_id: str) -> Optional[dict[str, Any]]:
             "symbol_start_price": None,
             "symbol_shares": None,
             "points": [],
-            "error": "No benchmark bar data available",
+            "error": "No SPY benchmark bar data available",
         }
 
-    # Get starting prices and compute shares
+    # SPY buy-hold
     spy_start_price = spy_bars[0].close
-    symbol_start_price = symbol_bars[0].close
     spy_shares = initial_capital / spy_start_price if spy_start_price > 0 else 0
-    symbol_shares = initial_capital / symbol_start_price if symbol_start_price > 0 else 0
 
-    # Build time-indexed lookup for symbol bars (using date only for daily bars)
+    # Single-symbol buy-hold (None for multi-symbol runs or when symbol == SPY)
+    symbol_start_price: Optional[float] = None
+    symbol_shares: float = 0.0
     symbol_by_date: dict[str, float] = {}
-    for bar in symbol_bars:
-        date_key = bar.timestamp.date().isoformat()
-        symbol_by_date[date_key] = bar.close
+    if symbol_bars:
+        symbol_start_price = symbol_bars[0].close
+        symbol_shares = initial_capital / symbol_start_price if symbol_start_price > 0 else 0
+        for bar in symbol_bars:
+            symbol_by_date[bar.timestamp.date().isoformat()] = bar.close
 
-    # Compute benchmark points for each day
+    # Compute benchmark points for each SPY day
     points: list[dict[str, Any]] = []
     for spy_bar in spy_bars:
         date_key = spy_bar.timestamp.date().isoformat()
-        spy_price = spy_bar.close
-        symbol_price = symbol_by_date.get(date_key)
-
-        spy_value = spy_shares * spy_price
+        spy_value = spy_shares * spy_bar.close
         spy_pnl = spy_value - initial_capital
 
+        symbol_price = symbol_by_date.get(date_key)
+        sym_pnl: Optional[float] = None
+        sym_value: Optional[float] = None
         if symbol_price is not None:
             sym_value = symbol_shares * symbol_price
             sym_pnl = sym_value - initial_capital
-        else:
-            sym_value = None
-            sym_pnl = None
 
         points.append({
             "timestamp": spy_bar.timestamp.isoformat(),
@@ -677,7 +716,7 @@ def fetch_benchmark_series(run_id: str) -> Optional[dict[str, Any]]:
         "initial_capital": initial_capital,
         "spy_start_price": round(spy_start_price, 2),
         "spy_shares": round(spy_shares, 4),
-        "symbol_start_price": round(symbol_start_price, 2),
+        "symbol_start_price": round(symbol_start_price, 2) if symbol_start_price is not None else None,
         "symbol_shares": round(symbol_shares, 4),
         "points": points,
         "total_days": len(spy_bars),

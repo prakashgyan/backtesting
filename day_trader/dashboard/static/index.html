@@ -146,6 +146,7 @@
             <thead>
               <tr class="text-slate-500 text-left border-b border-slate-800">
                 <th class="px-3 py-2 font-medium">Time</th>
+                <th class="px-3 py-2 font-medium">Symbol</th>
                 <th class="px-3 py-2 font-medium">Type</th>
                 <th class="px-3 py-2 font-medium">Side</th>
                 <th class="px-3 py-2 font-medium text-right">Qty</th>
@@ -158,26 +159,6 @@
             <tbody id="events-tbody"></tbody>
           </table>
           <p id="events-empty" class="text-xs text-slate-600 text-center py-6 hidden">No order events</p>
-        </div>
-      </div>
-
-      <!-- Position snapshots -->
-      <div class="section-card overflow-hidden">
-        <p class="text-xs text-slate-500 uppercase tracking-widest px-4 py-3 border-b border-slate-800">Position Snapshots</p>
-        <div class="overflow-x-auto max-h-72">
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="text-slate-500 text-left border-b border-slate-800">
-                <th class="px-3 py-2 font-medium">Time</th>
-                <th class="px-3 py-2 font-medium">Symbol</th>
-                <th class="px-3 py-2 font-medium text-right">Qty</th>
-                <th class="px-3 py-2 font-medium text-right">Mkt Value</th>
-                <th class="px-3 py-2 font-medium text-right">Unrealized</th>
-              </tr>
-            </thead>
-            <tbody id="positions-tbody"></tbody>
-          </table>
-          <p id="positions-empty" class="text-xs text-slate-600 text-center py-6 hidden">No position snapshots recorded for this run</p>
         </div>
       </div>
     </div>
@@ -206,7 +187,7 @@ const state = {
   summary: null,
   selectedRunId: null,
   charts: { pnl: null, pnlModal: null },
-  pnlCache: { pnl: [], benchmarks: null },
+  pnlCache: { pnlSeries: null, benchmarks: null },
 };
 
 // =====================================================================
@@ -348,7 +329,7 @@ function renderRunsTable() {
               onclick="openDetail('${r.run_id}')"
               data-runid="${r.run_id}">
       <td class="px-4 py-2.5 text-slate-200 font-medium">${strategyShort(r.strategy_name)}</td>
-      <td class="px-4 py-2.5 text-slate-300">${r.symbol || '—'}</td>
+      <td class="px-4 py-2.5">${renderSymbolCell(r.symbol)}</td>
       <td class="px-4 py-2.5 text-slate-500">${r.mode || '—'}</td>
       <td class="px-4 py-2.5">${statusBadge(r.status)}</td>
       <td class="px-4 py-2.5 text-right text-slate-400">${r.bars_processed}</td>
@@ -385,7 +366,7 @@ async function openDetail(runId) {
 }
 
 async function loadDetail(runId) {
-  const [run, events, pnl, detailMetrics, benchmarks] = await Promise.all([
+  const [run, events, pnlSeries, detailMetrics, benchmarks] = await Promise.all([
     fetchJSON(`/api/runs/${runId}`),
     fetchJSON(`/api/runs/${runId}/events`),
     fetchJSON(`/api/runs/${runId}/pnl`),
@@ -404,8 +385,7 @@ async function loadDetail(runId) {
 
   renderKPICards(run, detailMetrics || {});
   renderEventsTable(events || []);
-  renderPnLChart(pnl || [], benchmarks);
-  renderPositionSnapshots((detailMetrics && detailMetrics.position_snapshots) || []);
+  renderPnLChart(pnlSeries, benchmarks);
 }
 
 function renderKPICards(run, detailMetrics) {
@@ -419,7 +399,7 @@ function renderKPICards(run, detailMetrics) {
   const cards = [
     { label: 'Initial Capital', value: '$' + fmt(run.initial_capital, 0), cls: '' },
     { label: 'Bars Processed', value: run.bars_processed, cls: '' },
-    { label: 'Trades', value: detailMetrics.closed_trades ?? run.trades_executed, cls: '' },
+    { label: 'Closed Trades', value: detailMetrics.closed_trades ?? run.trades_executed, cls: '' },
     { label: 'Win Rate', value: winRatePct !== null ? fmt(winRatePct, 1) + '%' : '—', cls: winRatePct !== null ? pnlClass(winRatePct - 50) : '' },
     { label: 'Total PnL', value: pnlVal !== null ? '$' + fmt(pnlVal, 2) : '—', cls: pnlVal !== null ? pnlClass(pnlVal) : '' },
     { label: 'Returns %', value: returnsPct !== null ? fmt(returnsPct, 2) + '%' : '—', cls: returnsPct !== null ? pnlClass(returnsPct) : '' },
@@ -460,7 +440,8 @@ function renderEventsTable(events) {
     else if (e.status) statusEl = `<span class="text-slate-500">${e.status}</span>`;
 
     return `<tr class="border-b border-slate-900">
-      <td class="px-3 py-1.5 text-slate-600">${fmtTimeShort(e.event_time_utc)}</td>
+      <td class="px-3 py-1.5 text-slate-500 whitespace-nowrap">${fmtTime(e.event_time_utc)}</td>
+      <td class="px-3 py-1.5 text-slate-300 font-medium">${e.symbol || '—'}</td>
       <td class="px-3 py-1.5 ${typeColor}">${e.event_type.replace('ORDER_', '')}</td>
       <td class="px-3 py-1.5 ${sideColor} font-medium">${e.side || '—'}</td>
       <td class="px-3 py-1.5 text-right text-slate-400">${e.qty !== null ? e.qty : '—'}</td>
@@ -472,37 +453,47 @@ function renderEventsTable(events) {
   }).join('');
 }
 
-function renderPositionSnapshots(snapshots) {
-  const tbody = document.getElementById('positions-tbody');
-  const empty = document.getElementById('positions-empty');
-
-  if (!snapshots || snapshots.length === 0) {
-    tbody.innerHTML = '';
-    empty.classList.remove('hidden');
-    return;
-  }
-
-  empty.classList.add('hidden');
-  tbody.innerHTML = snapshots.map(s => {
-    const unrealizedCls = pnlClass(s.unrealized_pnl);
-    return `<tr class="border-b border-slate-900">
-      <td class="px-3 py-1.5 text-slate-600">${fmtTimeShort(s.event_time_utc)}</td>
-      <td class="px-3 py-1.5 text-slate-300">${s.symbol || '—'}</td>
-      <td class="px-3 py-1.5 text-right text-slate-400">${s.qty !== null && s.qty !== undefined ? s.qty : '—'}</td>
-      <td class="px-3 py-1.5 text-right text-slate-500">${s.market_value !== null && s.market_value !== undefined ? '$' + fmt(s.market_value, 2) : '—'}</td>
-      <td class="px-3 py-1.5 text-right ${unrealizedCls}">${s.unrealized_pnl !== null && s.unrealized_pnl !== undefined ? '$' + fmt(s.unrealized_pnl, 2) : '—'}</td>
-    </tr>`;
-  }).join('');
+function renderSymbolCell(symbol) {
+  if (!symbol) return '<span class="text-slate-600">—</span>';
+  const parts = symbol.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length === 1) return `<span class="text-slate-300">${parts[0]}</span>`;
+  return parts.map(s =>
+    `<span class="badge" style="background:#1e40af22;color:#93c5fd;border:1px solid #1e40af55;margin-right:2px">${s}</span>`
+  ).join('');
 }
 
-function buildPnLOpts(pnl, benchmarks, height) {
-  const data = pnl.map(p => ({ x: new Date(p.event_time_utc).getTime(), y: p.cumulative_pnl }));
-  const finalPnL = pnl[pnl.length - 1].cumulative_pnl;
-  const lineColor = finalPnL >= 0 ? '#22c55e' : '#ef4444';
+// Palette for per-symbol lines (cycles if >6 symbols)
+const SYMBOL_COLORS = ['#38bdf8','#818cf8','#34d399','#fb923c','#f472b6','#facc15'];
 
-  const series = [{ name: 'Strategy PnL', data }];
-  const colors = [lineColor];
-  const dashArray = [0];
+function buildPnLOpts(pnlSeries, benchmarks, height) {
+  const points = (pnlSeries && pnlSeries.points) || [];
+  const bySymbol = (pnlSeries && pnlSeries.by_symbol) || {};
+  const isMulti = Object.keys(bySymbol).length > 1;
+
+  if (points.length === 0) return null;
+
+  const series = [];
+  const colors = [];
+  const dashArray = [];
+
+  if (isMulti) {
+    // Per-symbol lines — use symbol_cumulative_pnl from each symbol's points
+    Object.entries(bySymbol).forEach(([sym, pts], i) => {
+      const color = SYMBOL_COLORS[i % SYMBOL_COLORS.length];
+      const data = pts.map(p => ({ x: new Date(p.event_time_utc).getTime(), y: p.symbol_cumulative_pnl }));
+      series.push({ name: sym, data });
+      colors.push(color);
+      dashArray.push(0);
+    });
+  } else {
+    // Single line — aggregate
+    const finalPnL = points[points.length - 1].cumulative_pnl;
+    const lineColor = finalPnL >= 0 ? '#22c55e' : '#ef4444';
+    const data = points.map(p => ({ x: new Date(p.event_time_utc).getTime(), y: p.cumulative_pnl }));
+    series.push({ name: 'Strategy PnL', data });
+    colors.push(lineColor);
+    dashArray.push(0);
+  }
 
   if (benchmarks && benchmarks.points && benchmarks.points.length > 0) {
     const spyData = benchmarks.points
@@ -514,13 +505,13 @@ function buildPnLOpts(pnl, benchmarks, height) {
 
     if (spyData.length > 0) {
       series.push({ name: 'SPY Buy-Hold', data: spyData });
-      colors.push('rgba(245, 158, 11, 0.55)');
-      dashArray.push(0);
+      colors.push('rgba(245, 158, 11, 0.45)');
+      dashArray.push(4);
     }
-    if (symbolData.length > 0 && benchmarks.symbol !== 'SPY') {
+    if (!isMulti && symbolData.length > 0 && benchmarks.symbol !== 'SPY') {
       series.push({ name: `${benchmarks.symbol} Buy-Hold`, data: symbolData });
-      colors.push('rgba(139, 92, 246, 0.55)');
-      dashArray.push(0);
+      colors.push('rgba(139, 92, 246, 0.45)');
+      dashArray.push(4);
     }
   }
 
@@ -549,12 +540,13 @@ function buildPnLOpts(pnl, benchmarks, height) {
   };
 }
 
-function renderPnLChart(pnl, benchmarks) {
-  state.pnlCache = { pnl, benchmarks };
+function renderPnLChart(pnlSeries, benchmarks) {
+  state.pnlCache = { pnlSeries, benchmarks };
   const chartEl = document.getElementById('chart-pnl');
   const emptyEl = document.getElementById('pnl-empty');
+  const points = (pnlSeries && pnlSeries.points) || [];
 
-  if (pnl.length === 0) {
+  if (points.length === 0) {
     chartEl.innerHTML = '';
     emptyEl.classList.remove('hidden');
     document.getElementById('btn-expand-chart').classList.add('hidden');
@@ -564,7 +556,7 @@ function renderPnLChart(pnl, benchmarks) {
   emptyEl.classList.add('hidden');
   document.getElementById('btn-expand-chart').classList.remove('hidden');
 
-  const opts = buildPnLOpts(pnl, benchmarks, 200);
+  const opts = buildPnLOpts(pnlSeries, benchmarks, 200);
   if (!state.charts.pnl) {
     state.charts.pnl = new ApexCharts(chartEl, opts);
     state.charts.pnl.render();
@@ -574,14 +566,15 @@ function renderPnLChart(pnl, benchmarks) {
 }
 
 function openChartFullscreen() {
-  const { pnl, benchmarks } = state.pnlCache;
-  if (!pnl || pnl.length === 0) return;
+  const { pnlSeries, benchmarks } = state.pnlCache;
+  const points = (pnlSeries && pnlSeries.points) || [];
+  if (points.length === 0) return;
   document.getElementById('chart-modal').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   if (state.charts.pnlModal) { state.charts.pnlModal.destroy(); state.charts.pnlModal = null; }
   state.charts.pnlModal = new ApexCharts(
     document.getElementById('chart-pnl-modal'),
-    buildPnLOpts(pnl, benchmarks, window.innerHeight - 80)
+    buildPnLOpts(pnlSeries, benchmarks, window.innerHeight - 80)
   );
   state.charts.pnlModal.render();
 }

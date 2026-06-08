@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, date, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import csv
 
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
@@ -242,6 +242,85 @@ def load_bars_from_csv(file_path: Path, symbol: str) -> List[Bar]:
         return bars
     except Exception as e:
         logger.error(f"Failed to load bars from CSV: {e}")
+        raise
+
+
+def load_bars_from_csv_multi(file_path: Path, symbols: Optional[List[str]] = None) -> List[Bar]:
+    """Load bars from CSV file with optional multi-symbol filtering.
+
+    Expected CSV columns:
+    - Legacy single-symbol: timestamp,open,high,low,close,volume
+    - Multi-symbol: timestamp,symbol,open,high,low,close,volume
+
+    Args:
+        file_path: Path to CSV file.
+        symbols: Optional symbol allowlist. When provided, only rows for these
+            symbols are returned.
+
+    Returns:
+        List of Bar objects.
+
+    Raises:
+        ValueError: If symbols are required but CSV lacks a symbol column.
+    """
+    try:
+        bars: List[Bar] = []
+        failed_rows = 0
+        requested = set(symbols) if symbols else None
+
+        with open(file_path, "r") as f:
+            reader = csv.DictReader(f)
+            has_symbol_col = bool(reader.fieldnames and "symbol" in reader.fieldnames)
+
+            if requested and len(requested) > 1 and not has_symbol_col:
+                raise ValueError(
+                    "CSV does not contain a 'symbol' column; cannot load multiple symbols"
+                )
+
+            single_fallback_symbol = next(iter(requested)) if requested and len(requested) == 1 else None
+
+            for row in reader:
+                try:
+                    ts = datetime.fromisoformat(row["timestamp"])
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+
+                    row_symbol = row.get("symbol", "").strip() if has_symbol_col else ""
+                    symbol = row_symbol or single_fallback_symbol
+                    if not symbol:
+                        failed_rows += 1
+                        continue
+
+                    if requested and symbol not in requested:
+                        continue
+
+                    bar = Bar(
+                        symbol=symbol,
+                        timestamp=ts,
+                        open=float(row["open"]),
+                        high=float(row["high"]),
+                        low=float(row["low"]),
+                        close=float(row["close"]),
+                        volume=float(row["volume"]),
+                    )
+                    bars.append(bar)
+                except (ValueError, KeyError):
+                    logger.warning("Skipping invalid row in multi-symbol CSV")
+                    failed_rows += 1
+
+        total_rows = len(bars) + failed_rows
+        if failed_rows > 0 and len(bars) == 0:
+            raise ValueError(f"All {failed_rows} rows failed to parse from {file_path}")
+        if total_rows > 0 and failed_rows / total_rows > 0.5:
+            raise ValueError(
+                f"Majority of rows failed to parse ({failed_rows}/{total_rows}) "
+                f"from {file_path} — check file format"
+            )
+
+        logger.info(f"Loaded {len(bars)} bars from {file_path} (multi-symbol)")
+        return bars
+    except Exception as e:
+        logger.error(f"Failed to load bars from CSV (multi-symbol): {e}")
         raise
 
 

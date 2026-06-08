@@ -15,6 +15,7 @@ from day_trader.dashboard import queries
 from day_trader.dashboard.models import (
     BenchmarkSeries,
     PnLPoint,
+    PnLSeries,
     RunDetail,
     RunDetailMetrics,
     RunEvent,
@@ -87,12 +88,18 @@ async def get_events(run_id: str) -> list[RunEvent]:
     return [RunEvent(**r) for r in rows]
 
 
-@app.get("/api/runs/{run_id}/pnl", response_model=list[PnLPoint])
-async def get_pnl(run_id: str) -> list[PnLPoint]:
-    rows: list[dict[str, Any]] = await asyncio.to_thread(
+@app.get("/api/runs/{run_id}/pnl", response_model=PnLSeries)
+async def get_pnl(run_id: str) -> PnLSeries:
+    result: dict[str, Any] = await asyncio.to_thread(
         queries.compute_pnl_series, run_id
     )
-    return [PnLPoint(**r) for r in rows]
+    return PnLSeries(
+        points=[PnLPoint(**p) for p in result.get("points", [])],
+        by_symbol={
+            sym: [PnLPoint(**p) for p in pts]
+            for sym, pts in result.get("by_symbol", {}).items()
+        },
+    )
 
 
 @app.get("/api/runs/{run_id}/detail-metrics", response_model=RunDetailMetrics)
